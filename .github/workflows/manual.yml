@@ -1,5 +1,5 @@
 
-name: VWW Journey - Jcink Connection Test
+name: VWW Journey - RP Scanner Test
 
 on:
   workflow_dispatch:
@@ -8,38 +8,96 @@ permissions:
   contents: read
 
 jobs:
-  test-jcink:
+  scan:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Test public Jcink thread access
+      - name: Scan Jaggedstar's RP thread
         shell: bash
         run: |
           python3 - <<'PY'
+          import re
           import urllib.request
-          import urllib.error
+          from html.parser import HTMLParser
 
-          url = "https://vwwnewleaf.jcink.net/index.php?showtopic=68"
+          URL = "https://vwwnewleaf.jcink.net/index.php?showtopic=68"
+
+          class Scanner(HTMLParser):
+              def __init__(self):
+                  super().__init__()
+                  self.posts = []
+                  self.current = None
+                  self.in_header = False
+                  self.in_controls = False
+                  self.in_nav = False
+                  self.forums = []
+                  self.capture_forum = None
+
+              def handle_starttag(self, tag, attrs):
+                  a = dict(attrs)
+                  classes = a.get("class", "").split()
+
+                  if "postWrapper" in classes:
+                      self.current = {
+                          "character": "",
+                          "characterId": "",
+                          "postId": ""
+                      }
+
+                  if self.current is not None:
+                      if "postHeader" in classes:
+                          self.in_header = True
+                      if "postControls" in classes:
+                          self.in_controls = True
+
+                      href = a.get("href", "")
+
+                      if self.in_header and "showuser=" in href:
+                          match = re.search(r"showuser=(\d+)", href)
+                          if match:
+                              self.current["characterId"] = match.group(1)
+
+                      if self.in_controls and "view=findpost" in href:
+                          match = re.search(r"[?&]p=(\d+)", href)
+                          if match:
+                              self.current["postId"] = match.group(1)
+
+                  if "navigationTree" in classes:
+                      self.in_nav = True
+
+                  if self.in_nav and tag == "a":
+                      href = a.get("href", "")
+                      match = re.search(r"showforum=(\d+)", href)
+                      if match:
+                          self.capture_forum = {
+                              "id": match.group(1),
+                              "name": ""
+                          }
+
+              def handle_data(self, data):
+                  if self.capture_forum:
+                      self.capture_forum["name"] += data
+
+              def handle_endtag(self, tag):
+                  if tag == "a" and self.capture_forum:
+                      self.forums.append(self.capture_forum)
+                      self.capture_forum = None
 
           request = urllib.request.Request(
-              url,
+              URL,
               headers={"User-Agent": "VWW-Newleaf-Journey/1.0"}
           )
 
-          try:
-              with urllib.request.urlopen(request, timeout=20) as response:
-                  html = response.read().decode("utf-8", "replace")
-                  status = response.status
+          with urllib.request.urlopen(request, timeout=20) as response:
+              html = response.read().decode("utf-8", "replace")
 
-              print("HTTP status:", status)
-              print("Response length:", len(html))
-              print("Jaggedstar found:", "Jaggedstar" in html)
-              print("Steaming Pools found:", "The Steaming Pools" in html)
-              print("Post 276 found:", "p=276" in html)
-              print("Security challenge:", "Please stand by" in html)
+          if "Please stand by" in html:
+              raise RuntimeError("Jcink security challenge encountered")
 
-          except urllib.error.HTTPError as error:
-              print("HTTP error:", error.code)
-          except Exception as error:
-              print("Connection error:", type(error).__name__, str(error))
+          scanner = Scanner()
+          scanner.feed(html)
+
+          print("Downloaded HTML:", len(html), "characters")
+          print("Forums detected:", scanner.forums)
+          print("Posts detected:", scanner.posts)
           PY
